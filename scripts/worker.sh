@@ -76,7 +76,7 @@ while true; do
     # Pull latest before running, if requested and workspace is a repo.
     if [ "$GIT_PULL_BEFORE" = "true" ] && [ -d "$WORKSPACE/.git" ]; then
       log "git pull in $WORKSPACE"
-      (cd "$WORKSPACE" && git pull --ff-only) >>"$log_file" 2>&1 \
+      (cd "$WORKSPACE" && git checkout "$REPO_BRANCH" && git pull --ff-only) >>"$log_file" 2>&1 \
         || log "git pull failed (continuing)"
     fi
 
