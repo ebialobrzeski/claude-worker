@@ -5,6 +5,9 @@ services:
     container_name: claude-worker
     restart: unless-stopped
     environment:
+      # UID/GID to run as — must match your NAS user (run `id` on the host).
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
       # Subscription auth — see INSTRUCTIONS.md "Authentication".
       CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN}"
       GIT_USER_EMAIL: "${GIT_USER_EMAIL:-claude@worker.local}"
@@ -23,4 +26,4 @@ services:
       - "${LOCAL_REPO_PATH:-./workspace}:/workspace"
       - "./tasks:/tasks"
       - "./logs:/logs"
-      - "${SSH_KEY_PATH:-~/.ssh}:/root/.ssh:ro"
+      - "${SSH_KEY_PATH:-~/.ssh}:/home/worker/.ssh:ro"
