@@ -1,0 +1,7 @@
+.env
+logs/
+tasks/queue/*.md
+!tasks/queue/README.md
+tasks/done/
+tasks/failed/
+workspace/

@@ -1,0 +1,26 @@
+services:
+  worker:
+    build: .
+    image: claude-worker:latest
+    container_name: claude-worker
+    restart: unless-stopped
+    environment:
+      # Subscription auth — see INSTRUCTIONS.md "Authentication".
+      CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN}"
+      GIT_USER_EMAIL: "${GIT_USER_EMAIL:-claude@worker.local}"
+      GIT_USER_NAME: "${GIT_USER_NAME:-Claude Worker}"
+      REPO_URL: "${REPO_URL:-}"
+      REPO_BRANCH: "${REPO_BRANCH:-main}"
+      COMMIT_BRANCH_PREFIX: "${COMMIT_BRANCH_PREFIX:-claude/work}"
+      GIT_PULL_BEFORE: "${GIT_PULL_BEFORE:-true}"
+      GIT_PUSH: "${GIT_PUSH:-false}"
+      CLAUDE_ALLOWED_TOOLS: "${CLAUDE_ALLOWED_TOOLS:-Bash,Read,Write,Edit,Glob,Grep,LS}"
+      CLAUDE_MAX_TURNS: "${CLAUDE_MAX_TURNS:-30}"
+      POLL_INTERVAL: "${POLL_INTERVAL:-30}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+    volumes:
+      - "${LOCAL_REPO_PATH:-./workspace}:/workspace"
+      - "./tasks:/tasks"
+      - "./logs:/logs"
+      - "${SSH_KEY_PATH:-~/.ssh}:/root/.ssh:ro"
