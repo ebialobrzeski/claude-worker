@@ -12,3 +12,7 @@ make no changes.
 
 Do not fix more than one issue — one well-understood fix is better than
 several rushed ones.
+
+After completing your work, append a brief entry to CLAUDE.md under a
+"## Work log" section noting what you checked, what you changed, and
+anything that should be left alone in future runs.

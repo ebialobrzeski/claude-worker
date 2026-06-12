@@ -10,3 +10,7 @@ Steps:
 4. Explain what the bug was, why it matters, and what you changed.
 
 If no bugs are found, say so and make no changes.
+
+After completing your work, append a brief entry to CLAUDE.md under a
+"## Work log" section noting what you checked, what you changed, and
+anything that should be left alone in future runs.
