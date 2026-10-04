@@ -2,7 +2,6 @@ services:
   worker:
     build: .
     image: claude-worker:latest
-    container_name: claude-worker
     restart: unless-stopped
     environment:
       # UID/GID to run as — must match your NAS user (run `id` on the host).
