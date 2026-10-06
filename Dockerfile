@@ -8,7 +8,7 @@ WORKDIR /tmp
 # su-exec is the Alpine equivalent of gosu — drops privileges without a
 # shell wrapper, so the worker process gets a clean non-root environment.
 # docker-cli/compose/buildx let Claude drive the host's Docker daemon when
-# the socket is mounted (see docker-compose.docker.yml); they are inert
+# the socket is mounted (DOCKER_SOCKET_PATH in docker-compose.yml); inert
 # otherwise.
 RUN apk add --no-cache git bash curl openssh-client jq python3 su-exec \
         docker-cli docker-cli-compose docker-cli-buildx
@@ -41,6 +41,11 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
              /usr/local/bin/git_commit.sh \
              /usr/local/bin/remote_control.sh \
              /usr/local/bin/telegram_bot.sh
+COPY scripts/cli.sh /usr/local/bin/claude-worker
+RUN chmod +x /usr/local/bin/claude-worker
+
+# Example tasks, for the Telegram bot's /run when tasks/ is a fresh volume.
+COPY tasks/examples/ /opt/claude-worker/examples/
 
 # Claude's config, login credentials and session history live here; mount a
 # volume on it so a one-time `login` survives container rebuilds.

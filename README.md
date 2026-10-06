@@ -48,24 +48,80 @@ The Telegram command bot (`TELEGRAM_COMMANDS=true`) runs alongside the queue
 in `queue` and `both` modes. If any service exits, the container exits and
 `restart: unless-stopped` brings it back.
 
-## Quick start
+## Deploying with Dockhand (git stack)
+
+`docker-compose.yml` is written to be deployed straight from this repo by
+[Dockhand](https://github.com/Finsys/dockhand) (or Portainer etc.):
+
+1. **Stacks → Add from Git**: repo `https://github.com/ebialobrzeski/claude-worker`,
+   branch `main`, compose file `docker-compose.yml`. Optionally enable the
+   webhook / auto-sync to redeploy on every push.
+2. **Stack variables** — set at least the ones you need from `.env.example`,
+   for example:
+
+   ```env
+   WORKER_MODE=both
+   PUID=1000                      # `id` on the NAS
+   PGID=1000
+   REPO_URL=https://github.com/you/your-repo.git
+   GITHUB_TOKEN=github_pat_…      # clone/push over HTTPS
+   GIT_PUSH=true
+   TELEGRAM_BOT_TOKEN=…
+   TELEGRAM_CHAT_ID=…
+   TELEGRAM_COMMANDS=true
+   TELEGRAM_ALLOWED_USER_IDS=…
+   DOCKER_SOCKET_PATH=/var/run/docker.sock   # only if Claude should use host Docker
+   ```
+
+3. **Deploy.** The image is pulled from
+   `ghcr.io/ebialobrzeski/claude-worker:latest` (built by GitHub Actions on
+   every push to `main`); if that pull fails, compose builds it from the repo
+   instead.
+4. **Remote Control login (once):** open the container's terminal in
+   Dockhand and run `claude-worker login`. Check with `claude-worker status`.
+
+Why it works without host folders: Dockhand runs compose from its own data
+directory, so relative paths like `./tasks` would end up inside Dockhand's
+container instead of on your NAS. By default everything is therefore stored
+in **named volumes** (`workspace`, `tasks`, `logs`, `claude-home`, `ssh`),
+which survive redeploys and image updates. Prefer folders on the NAS? Set
+`LOCAL_REPO_PATH`, `TASKS_PATH`, `LOGS_PATH`, `CLAUDE_HOME_PATH` or
+`SSH_KEY_PATH` to **absolute** host paths.
+
+> GHCR packages start out private. After the first workflow run, either make
+> the package public (GitHub → Packages → claude-worker → Package settings →
+> Change visibility) or add ghcr.io credentials in Dockhand. Otherwise the
+> pull fails and the stack is built on the NAS instead (slower, but works).
+
+## Quick start (command line)
 
 ```bash
 # 1. Configure
 cp .env.example .env
 # Edit .env — pick WORKER_MODE and set up auth (see Authentication below)
 
-# 2. Build and start the worker
-docker compose up -d --build
+# 2. Start the worker (pulls the prebuilt image, or builds it)
+docker compose up -d
 
 # 3. Queue a task
-cp tasks/examples/fix_tests.md tasks/queue/
-#   …or use the dispatcher:
+docker compose exec worker claude-worker task "Fix the failing tests" fix_tests
+#   …or, with TASKS_PATH=./tasks set in .env, from the host:
 ./dispatch.sh tasks/examples/add_docstrings.md
 
 # 4. Watch it work
 docker compose logs -f
 ```
+
+The `claude-worker` helper inside the container (also usable from the
+Dockhand terminal):
+
+| Command | Effect |
+|---|---|
+| `claude-worker login` | one-time claude.ai login (Remote Control) |
+| `claude-worker status` | Claude auth status |
+| `claude-worker task "<prompt>" [name]` | queue a task |
+| `claude-worker queue` | list queued tasks |
+| `claude-worker shell` | bash as the worker user in `/workspace` |
 
 ## Remote Control
 
@@ -80,14 +136,15 @@ HTTPS requests; no ports need to be opened.
 # 1. In .env
 WORKER_MODE=remote-control        # or both
 
-# 2. One-time login (stored in ./claude-home, survives rebuilds).
-#    Opens a URL — sign in with your claude.ai account and paste the code.
-docker compose run --rm worker login
-docker compose run --rm worker status   # check
+# 2. Start
+docker compose up -d
 
-# 3. Start
-docker compose up -d --build
-docker compose logs -f                   # shows the session URL
+# 3. One-time login (stored in the claude-home volume, survives redeploys).
+#    Opens a URL — sign in with your claude.ai account and paste the code.
+#    In Dockhand: run `claude-worker login` in the container terminal.
+docker compose exec worker claude-worker login
+docker compose exec worker claude-worker status   # check
+docker compose logs -f                             # shows the session URL
 ```
 
 Until you log in, the Remote Control service just waits and logs a reminder.
@@ -111,26 +168,22 @@ Notes:
 - Remote Control worktrees (`.claude/worktrees/`) are added to the repo's
   `.git/info/exclude` so queue commits never pick them up.
 
-Other helper commands:
-
-```bash
-docker compose run --rm worker shell    # bash as the worker user in /workspace
-docker compose exec worker claude       # interactive Claude in the running container
-```
+For an interactive Claude in the running container:
+`docker compose exec worker claude-worker shell`, then `claude`.
 
 ## Docker on the host
 
-To let Claude use the host's Docker daemon, enable the overlay compose file:
+To let Claude use the host's Docker daemon, set (in `.env` or the Dockhand
+stack variables):
 
 ```bash
-# in .env
-COMPOSE_FILE=docker-compose.yml:docker-compose.docker.yml
-HOST_WORKSPACE_PATH=/volume1/docker/claude-worker/workspace   # absolute host path of LOCAL_REPO_PATH
+DOCKER_SOCKET_PATH=/var/run/docker.sock
 ```
 
-This mounts `/var/run/docker.sock` (override with `DOCKER_SOCKET_PATH`); the
-entrypoint detects the socket's group and adds the worker user to it, and the
-image ships `docker`, `docker compose` and `docker buildx`.
+The socket is then mounted into the container (by default `/dev/null` is
+mounted in its place, i.e. off); the entrypoint detects the socket's group
+and adds the worker user to it, and the image ships `docker`,
+`docker compose` and `docker buildx`.
 
 Things to know:
 
@@ -138,8 +191,11 @@ Things to know:
   (Remote Control, Telegram, the queue) can then control the whole host.
   Use it only on a machine you're comfortable with that.
 - Containers Claude starts are siblings on the host, so bind-mount paths are
-  **host** paths. `HOST_WORKSPACE_PATH` is passed to Claude, and
-  `config/CLAUDE.md` tells it to use it instead of `/workspace`.
+  **host** paths. The entrypoint looks up where `/workspace` lives on the
+  host (bind path or named volume) and passes it to Claude as
+  `HOST_WORKSPACE_PATH` / `WORKSPACE_VOLUME`; `config/CLAUDE.md` tells it to
+  use them instead of `/workspace`. Set `HOST_WORKSPACE_PATH` yourself to
+  override the detection.
 - Ports published by those containers are reachable from the worker at
   `host.docker.internal:<port>`.
 - Claude is instructed to label what it creates (`claude-worker=1`), clean up
@@ -198,12 +254,19 @@ All settings are environment variables, overridable via `.env`:
 |---|---|---|
 | `WORKER_MODE` | `queue` | `queue`, `remote-control` or `both` — see Modes |
 | `CLAUDE_CODE_OAUTH_TOKEN` | _(empty)_ | Queue-mode subscription auth — see below |
-| `CLAUDE_HOME_PATH` | `./claude-home` | Host dir for Claude's login, settings and history |
+| `CLAUDE_HOME_PATH` | `claude-home` volume | Claude's login, settings and history |
+| `TASKS_PATH` | `tasks` volume | Queue, done and failed task files |
+| `LOGS_PATH` | `logs` volume | Run logs |
+| `SSH_KEY_PATH` | `ssh` volume (empty) | SSH keys for git, mounted read-only |
+| `GITHUB_TOKEN` | _(empty)_ | HTTPS auth for github.com clone/push |
+| `DOCKER_SOCKET_PATH` | `/dev/null` (off) | Host Docker socket — see Docker on the host |
+| `WORKER_IMAGE` | `ghcr.io/ebialobrzeski/claude-worker:latest` | Image to run |
+| `WORKER_PULL_POLICY` | `always` | `always` pulls updates on every deploy; `build` forces a local build |
 | `GIT_USER_EMAIL` | `claude@worker.local` | Git commit identity |
 | `GIT_USER_NAME` | `Claude Worker` | Git commit identity |
 | `REPO_URL` | _(empty)_ | Clone from remote on first start |
 | `REPO_BRANCH` | `main` | Branch to check out |
-| `LOCAL_REPO_PATH` | `./workspace` | Host path mounted to `/workspace` |
+| `LOCAL_REPO_PATH` | `workspace` volume | Repo mounted at `/workspace` |
 | `COMMIT_BRANCH_PREFIX` | `claude/work` | Prefix for result branches |
 | `GIT_PULL_BEFORE` | `true` | Pull before each task |
 | `GIT_PUSH` | `false` | Push result branch after commit |
@@ -221,18 +284,21 @@ Remote Control (`RC_*`) and host Docker (`HOST_WORKSPACE_PATH`,
 
 ### Providing the repo to work on
 
-- **Mount a local checkout** (default): set `LOCAL_REPO_PATH` to a repo on the
-  host; it's mounted at `/workspace`.
-- **Clone from remote**: set `REPO_URL` (and optionally `REPO_BRANCH`). The
-  worker clones it on first start if the workspace is empty.
+- **Clone from remote** (best for Dockhand): set `REPO_URL` (and optionally
+  `REPO_BRANCH`). The worker clones it into the `workspace` volume on first
+  start. For private GitHub repos over HTTPS set `GITHUB_TOKEN` (a
+  fine-grained PAT with Contents read/write); for SSH, set `SSH_KEY_PATH` to
+  an absolute host path with your keys.
+- **Mount a local checkout**: set `LOCAL_REPO_PATH` to the repo's absolute
+  path on the host; it's mounted at `/workspace`.
 
 ## Authentication
 
 **Do not use `ANTHROPIC_API_KEY`.** Two subscription-based options:
 
 - **Stored login** (required for Remote Control, works for the queue too):
-  `docker compose run --rm worker login` once. Credentials are kept in
-  `CLAUDE_HOME_PATH` (`./claude-home`) — treat that directory as a secret.
+  `claude-worker login` once in the container terminal. Credentials are kept
+  in the `claude-home` volume (or `CLAUDE_HOME_PATH`) — treat it as a secret.
 - **`CLAUDE_CODE_OAUTH_TOKEN`** (queue only): these tokens can only make
   model requests, so they cannot open Remote Control sessions; the Remote
   Control service ignores it. If set, the queue uses it instead of the
@@ -261,9 +327,12 @@ and non-rolling. Opt-in is required once in account settings. With
 Trigger tasks on a schedule from the host (DSM Task Scheduler or cron):
 
 ```cron
-# Run fix_tests every night at 02:00
-0 2 * * * cd /volume1/docker/claude-worker && ./dispatch.sh tasks/examples/fix_tests.md
+# Run fix_tests every night at 02:00 (use your container's name)
+0 2 * * * docker exec claude-worker-worker-1 claude-worker task "$(cat /path/to/fix_tests.md)" fix_tests
 ```
+
+With `TASKS_PATH` pointing at a host folder you can also keep using
+`./dispatch.sh` from a checkout of this repo.
 
 ## Telegram notifications
 
@@ -286,7 +355,9 @@ Telegram never affect the worker run.
 ## Upgrading Claude Code
 
 The version is pinned by the `CLAUDE_CODE_VERSION` build arg in the
-`Dockerfile`. Change it there (or pass `--build-arg`), then rebuild:
+`Dockerfile`. Change it there and push to `main`: GitHub Actions publishes a
+new image and the next Dockhand redeploy (or `docker compose up -d`) pulls
+it. To build locally instead:
 
 ```bash
 docker compose build --no-cache
@@ -299,13 +370,13 @@ docker compose up -d
 claude-worker/
 ├── Dockerfile                  # node:22-alpine + Claude Code + docker CLI
 ├── docker-compose.yml          # the worker service
-├── docker-compose.docker.yml   # optional overlay: host Docker socket
 ├── .env.example                # configuration template
 ├── dispatch.sh                 # host-side helper to queue tasks
 ├── config/
 │   └── CLAUDE.md               # house rules loaded by every Claude session
 ├── scripts/
 │   ├── entrypoint.sh           # user setup, Docker group, mode dispatch
+│   ├── cli.sh                  # `claude-worker` helper (login, task, …)
 │   ├── worker.sh               # task-queue poll loop
 │   ├── run_claude.sh           # runs claude --print for one prompt
 │   ├── git_commit.sh           # commits results to a branch

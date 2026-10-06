@@ -4,9 +4,10 @@
 # Restarts it with backoff if it exits (network drop, token refresh, …).
 #
 # Needs a full claude.ai login stored in $CLAUDE_CONFIG_DIR — run
-#   docker compose run --rm worker login
-# once. CLAUDE_CODE_OAUTH_TOKEN (setup-token) cannot open Remote Control
-# sessions, and if set it would shadow the stored login, so it is unset here.
+#   claude-worker login
+# once in the container terminal. CLAUDE_CODE_OAUTH_TOKEN (setup-token)
+# cannot open Remote Control sessions, and if set it would shadow the
+# stored login, so it is unset here.
 set -uo pipefail
 
 RC_NAME="${RC_NAME:-claude-worker}"
@@ -32,7 +33,7 @@ cd /workspace || { log "no /workspace"; exit 1; }
 backoff=5
 while true; do
   if [ ! -s "$CREDENTIALS" ]; then
-    log "Not logged in. Run once on the host:  docker compose run --rm worker login"
+    log "Not logged in. Run once in the container terminal (e.g. Dockhand):  claude-worker login"
     sleep 60
     continue
   fi

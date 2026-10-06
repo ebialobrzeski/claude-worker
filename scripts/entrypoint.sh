@@ -6,12 +6,14 @@
 #   - prepare the persistent Claude config dir,
 # then drops privileges and starts the requested mode.
 #
-# Usage (docker compose run --rm worker <command>):
-#   (no args)      start according to WORKER_MODE (queue | remote-control | both)
-#   login          one-time interactive claude.ai login (needed for Remote Control)
-#   status         show Claude auth status
-#   shell          interactive bash as the worker user
-#   <anything>     run that command as the worker user
+# Usage:
+#   (no args)        start according to WORKER_MODE (queue | remote-control | both)
+#   login|status|shell|task|queue|help
+#                    `claude-worker` helper subcommands (see scripts/cli.sh)
+#   <anything else>  run that command as the worker user
+#
+# In a running container (e.g. the Dockhand terminal) use the same helper
+# directly: `claude-worker login`.
 set -e
 
 PUID="${PUID:-1000}"
@@ -19,6 +21,7 @@ PGID="${PGID:-1000}"
 WORKER_HOME="/home/worker"
 CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$WORKER_HOME/.claude}"
 DOCKER_SOCK="/var/run/docker.sock"
+RUNTIME_ENV="/run/claude-worker.env"
 export CLAUDE_CONFIG_DIR
 
 # --- User ------------------------------------------------------------------
@@ -40,6 +43,10 @@ chown -R "$PUID:$PGID" "$CLAUDE_CONFIG_DIR"
 # host; the worker (and Telegram bot) must be able to write to them.
 mkdir -p /tasks/queue /tasks/done /tasks/failed /logs
 chown "$PUID:$PGID" /tasks /tasks/queue /tasks/done /tasks/failed /logs 2>/dev/null || true
+# A fresh named volume is root-owned; let the worker clone REPO_URL into it.
+if [ -d /workspace ] && [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
+  chown "$PUID:$PGID" /workspace
+fi
 
 # --- Host Docker access ----------------------------------------------------
 # The socket's GID differs per host, so look it up at runtime and add the
@@ -54,7 +61,26 @@ if [ -S "$DOCKER_SOCK" ]; then
   SOCK_GROUP="$(getent group "$SOCK_GID" | cut -d: -f1)"
   addgroup "$USER_NAME" "$SOCK_GROUP" 2>/dev/null || true
   echo "[entrypoint] Host Docker socket available (group $SOCK_GROUP, gid=$SOCK_GID)"
+
+  # Containers Claude starts resolve bind mounts on the host, so it needs the
+  # host-side location of /workspace. Look it up from our own mounts unless
+  # it was set explicitly (works for bind mounts and named volumes alike).
+  if [ -z "${HOST_WORKSPACE_PATH:-}" ]; then
+    mount_json="$(docker inspect "$(hostname)" --format '{{json .Mounts}}' 2>/dev/null || true)"
+    if [ -n "$mount_json" ]; then
+      HOST_WORKSPACE_PATH="$(echo "$mount_json" | jq -r '.[] | select(.Destination=="/workspace") | .Source // empty')"
+      WORKSPACE_VOLUME="$(echo "$mount_json" | jq -r '.[] | select(.Destination=="/workspace" and .Type=="volume") | .Name // empty')"
+    fi
+  fi
+  echo "[entrypoint] /workspace on host: ${HOST_WORKSPACE_PATH:-unknown}${WORKSPACE_VOLUME:+ (volume $WORKSPACE_VOLUME)}"
 fi
+export HOST_WORKSPACE_PATH="${HOST_WORKSPACE_PATH:-}" WORKSPACE_VOLUME="${WORKSPACE_VOLUME:-}"
+
+# Values computed here, for `docker exec … claude-worker` shells to source.
+{
+  echo "export HOST_WORKSPACE_PATH='$HOST_WORKSPACE_PATH'"
+  echo "export WORKSPACE_VOLUME='$WORKSPACE_VOLUME'"
+} >"$RUNTIME_ENV"
 
 # --- Claude config ---------------------------------------------------------
 # Skip the first-run onboarding and pre-trust /workspace so headless
@@ -80,10 +106,17 @@ if [ -d /workspace/.git ]; then
 fi
 
 # Git identity, written once here so the concurrently started services
-# don't race on ~/.gitconfig.
+# don't race on ~/.gitconfig. With GITHUB_TOKEN set, HTTPS clones/pushes to
+# github.com authenticate with it — the helper reads the variable at use
+# time, so the token is never written to disk.
 su-exec "$USER_NAME" env HOME="$WORKER_HOME" sh -c '
   git config --global user.email "${GIT_USER_EMAIL:-claude@worker.local}"
-  git config --global user.name "${GIT_USER_NAME:-Claude Worker}"'
+  git config --global user.name "${GIT_USER_NAME:-Claude Worker}"
+  git config --global --unset-all credential.https://github.com.helper 2>/dev/null || true
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git config --global credential.https://github.com.helper \
+      "!f() { echo username=x-access-token; echo password=\$GITHUB_TOKEN; }; f"
+  fi'
 
 as_worker() { exec su-exec "$USER_NAME" env HOME="$WORKER_HOME" "$@"; }
 
@@ -114,16 +147,8 @@ case "${1:-}" in
       wait -n; code=$?
       kill "${pids[@]}" 2>/dev/null; wait
       exit $code' services $services ;;
-  login)
-    # Remote Control needs a full claude.ai login; setup-token tokens can
-    # only make model requests. Credentials land in $CLAUDE_CONFIG_DIR.
-    cd /workspace 2>/dev/null || true
-    as_worker env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY claude auth login --claudeai ;;
-  status)
-    as_worker env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY claude auth status --text ;;
-  shell)
-    cd /workspace 2>/dev/null || true
-    as_worker /bin/bash -l ;;
+  login|status|shell|task|queue|help)
+    exec /usr/local/bin/claude-worker "$@" ;;
   *)
     as_worker "$@" ;;
 esac

@@ -1,12 +1,21 @@
+# Works both from a local checkout (`docker compose up -d`) and as a git
+# stack in Dockhand/Portainer: no relative host paths by default (those
+# would resolve inside the manager's own data dir) — state lives in named
+# volumes unless you point the *_PATH variables at absolute host paths.
+# Every setting comes from variables, so configure it via .env locally or
+# via the stack's variables in Dockhand.
 services:
   worker:
+    # Prebuilt by .github/workflows/docker-publish.yml on every push to main;
+    # if the pull fails, compose falls back to building from this repo.
+    image: "${WORKER_IMAGE:-ghcr.io/ebialobrzeski/claude-worker:latest}"
+    pull_policy: "${WORKER_PULL_POLICY:-always}"
     build: .
-    image: claude-worker:latest
     restart: unless-stopped
     # Reap zombie processes and forward signals (Claude spawns many children).
     init: true
-    # A TTY gives `docker compose run --rm worker login` an interactive
-    # terminal and keeps Remote Control's output readable in `logs -f`.
+    # A TTY gives `claude-worker login` an interactive terminal and keeps
+    # Remote Control's output readable in the logs.
     tty: true
     stdin_open: true
     environment:
@@ -16,10 +25,12 @@ services:
       # queue | remote-control | both — see README "Modes".
       WORKER_MODE: "${WORKER_MODE:-queue}"
       # Subscription auth for queue mode — see README "Authentication".
-      # Leave empty to use the stored `login` credentials instead.
+      # Leave empty to use the stored `claude-worker login` credentials.
       CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
       GIT_USER_EMAIL: "${GIT_USER_EMAIL:-claude@worker.local}"
       GIT_USER_NAME: "${GIT_USER_NAME:-Claude Worker}"
+      # HTTPS auth for github.com clones/pushes (fine-grained PAT).
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
       REPO_URL: "${REPO_URL:-}"
       REPO_BRANCH: "${REPO_BRANCH:-main}"
       COMMIT_BRANCH_PREFIX: "${COMMIT_BRANCH_PREFIX:-claude/work}"
@@ -40,10 +51,28 @@ services:
       RC_CAPACITY: "${RC_CAPACITY:-4}"
       RC_PERMISSION_MODE: "${RC_PERMISSION_MODE:-acceptEdits}"
       RC_EXTRA_ARGS: "${RC_EXTRA_ARGS:-}"
+      # Host path of /workspace for containers Claude starts; detected
+      # automatically when the Docker socket is mounted.
+      HOST_WORKSPACE_PATH: "${HOST_WORKSPACE_PATH:-}"
     volumes:
-      - "${LOCAL_REPO_PATH:-./workspace}:/workspace"
-      - "./tasks:/tasks"
-      - "./logs:/logs"
-      - "${SSH_KEY_PATH:-~/.ssh}:/home/worker/.ssh:ro"
-      # Claude login, settings and session history — survives rebuilds.
-      - "${CLAUDE_HOME_PATH:-./claude-home}:/home/worker/.claude"
+      # Each *_PATH is either an absolute host path (bind mount) or, by
+      # default, the name of a volume declared below.
+      - "${LOCAL_REPO_PATH:-workspace}:/workspace"
+      - "${TASKS_PATH:-tasks}:/tasks"
+      - "${LOGS_PATH:-logs}:/logs"
+      # Claude login, settings and session history — survives redeploys.
+      - "${CLAUDE_HOME_PATH:-claude-home}:/home/worker/.claude"
+      - "${SSH_KEY_PATH:-ssh}:/home/worker/.ssh:ro"
+      # Host Docker access: set DOCKER_SOCKET_PATH=/var/run/docker.sock to
+      # enable (= root on the host!). The /dev/null default leaves it off.
+      - "${DOCKER_SOCKET_PATH:-/dev/null}:/var/run/docker.sock"
+    extra_hosts:
+      # Lets Claude reach ports published by containers it starts.
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  workspace:
+  tasks:
+  logs:
+  claude-home:
+  ssh:

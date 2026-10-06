@@ -10,6 +10,10 @@
 # Otherwise it is treated as an inline prompt and written to a queue file.
 # The optional second arg sets the queued file's name (without .md);
 # it defaults to task_TIMESTAMP.
+#
+# Only works when the container mounts this checkout's tasks/ folder
+# (TASKS_PATH=./tasks). Otherwise use
+#   docker exec <container> claude-worker task "<prompt>" [name]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

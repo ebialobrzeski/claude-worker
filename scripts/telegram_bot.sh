@@ -12,7 +12,8 @@ set -uo pipefail
 QUEUE_DIR="/tasks/queue"
 DONE_DIR="/tasks/done"
 FAILED_DIR="/tasks/failed"
-EXAMPLES_DIR="/tasks/examples"
+# User examples in tasks/examples win; the image ships a copy as fallback.
+EXAMPLES_DIRS=("/tasks/examples" "/opt/claude-worker/examples")
 CURRENT_FILE="/tasks/.current"
 OFFSET_FILE="/tasks/.telegram_offset"
 LOG_DIR="/logs"
@@ -106,13 +107,18 @@ cmd_cancel() {
 }
 
 cmd_run() {
-  local name="${1%.md}" msg_id="$2"
-  if [ -n "$name" ] && valid_name "$name" && [ -f "$EXAMPLES_DIR/${name}.md" ]; then
-    queue_task "$(cat "$EXAMPLES_DIR/${name}.md")" "$msg_id"
-  else
-    reply "Usage: /run <name>. Available:
-$(cd "$EXAMPLES_DIR" 2>/dev/null && ls -1 *.md 2>/dev/null | sed 's/\.md$//')" "$msg_id"
+  local name="${1%.md}" msg_id="$2" dir
+  if [ -n "$name" ] && valid_name "$name"; then
+    for dir in "${EXAMPLES_DIRS[@]}"; do
+      if [ -f "$dir/${name}.md" ]; then
+        queue_task "$(cat "$dir/${name}.md")" "$msg_id"
+        return
+      fi
+    done
   fi
+  reply "Usage: /run <name>. Available:
+$(for dir in "${EXAMPLES_DIRS[@]}"; do (cd "$dir" 2>/dev/null && ls -1 *.md 2>/dev/null); done \
+    | sed 's/\.md$//' | sort -u)" "$msg_id"
 }
 
 HELP="claude-worker bot

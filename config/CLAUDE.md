@@ -20,8 +20,12 @@ running directly on the host:
 - Bind-mount paths are resolved **on the host**, not in this container.
   `/workspace` here is `$HOST_WORKSPACE_PATH` on the host — use
   `-v "$HOST_WORKSPACE_PATH/...:/..."`, never `-v /workspace/...`. If
-  `HOST_WORKSPACE_PATH` is empty, ask before bind-mounting, or use
-  `docker cp` / named volumes instead.
+  `$WORKSPACE_VOLUME` is set, the repo lives in that named volume and
+  `-v "$WORKSPACE_VOLUME:/src"` mounts all of it. If both are empty, ask
+  before bind-mounting, or use `docker cp` instead.
+- In `docker compose` files you write, relative paths like `./src` resolve
+  against `/workspace` *inside this container*, which the host doesn't
+  have — use `$HOST_WORKSPACE_PATH` there too.
 - Ports you publish (`-p 8080:80`) are on the host; reach them from here via
   `host.docker.internal:8080`.
 - Label everything you create with `--label claude-worker=1` (and
