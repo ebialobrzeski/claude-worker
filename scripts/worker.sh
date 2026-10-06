@@ -7,6 +7,7 @@
 set -uo pipefail
 
 QUEUE_DIR="/tasks/queue"
+CURRENT_FILE="/tasks/.current"
 DONE_DIR="/tasks/done"
 FAILED_DIR="/tasks/failed"
 LOG_DIR="/logs"
@@ -17,8 +18,6 @@ GIT_PULL_BEFORE="${GIT_PULL_BEFORE:-true}"
 COMMIT_BRANCH_PREFIX="${COMMIT_BRANCH_PREFIX:-claude/work}"
 REPO_URL="${REPO_URL:-}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
-GIT_USER_EMAIL="${GIT_USER_EMAIL:-claude@worker.local}"
-GIT_USER_NAME="${GIT_USER_NAME:-Claude Worker}"
 
 mkdir -p "$QUEUE_DIR" "$DONE_DIR" "$FAILED_DIR" "$LOG_DIR"
 
@@ -38,10 +37,8 @@ notify() {
     >/dev/null 2>&1 || true
 }
 
-# --- Git identity & optional clone ----------------------------------------
-git config --global user.email "$GIT_USER_EMAIL"
-git config --global user.name "$GIT_USER_NAME"
-git config --global --add safe.directory "$WORKSPACE"
+# --- Optional clone --------------------------------------------------------
+# Git identity and safe.directory are set up by entrypoint.sh / the image.
 
 # Clone from REPO_URL on first start if the workspace is empty.
 if [ -n "$REPO_URL" ] && [ ! -d "$WORKSPACE/.git" ]; then
@@ -66,6 +63,8 @@ while true; do
     [ -e "$task_file" ] || continue
 
     base="$(basename "$task_file")"
+    # The queue dir's README documents the queue; it is not a task.
+    [ "$base" = "README.md" ] && continue
     task_name="${base%.md}"
     timestamp="$(date -u +%Y%m%d_%H%M%S)"
     log_file="$LOG_DIR/${timestamp}_${task_name}.log"
@@ -82,6 +81,10 @@ while true; do
 
     prompt="$(cat "$task_file")"
 
+    # Read by telegram_bot.sh for /status and /log.
+    printf '%s\n%s\n' "$task_name" "$log_file" >"$CURRENT_FILE"
+    out_start=$(( $(wc -c <"$log_file" 2>/dev/null || echo 0) + 1 ))
+
     if run_claude.sh "$prompt" "$log_file"; then
       log "Task succeeded: $task_name"
       mv "$task_file" "$DONE_DIR/${timestamp}_${base}"
@@ -89,8 +92,12 @@ while true; do
       commit_summary="$(git_commit.sh "$task_name" "$timestamp" "$log_file")"
       log "$commit_summary"
 
+      # Claude's final answer, trimmed to fit a Telegram message.
+      output="$(tail -c +"$out_start" "$log_file" | tail -c 3000)"
       notify "✅ claude-worker finished: ${task_name}
-${commit_summary}"
+${commit_summary}
+
+${output}"
     else
       exit_code=$?
       log "Task failed (exit $exit_code): $task_name"
@@ -100,6 +107,7 @@ ${commit_summary}"
 exit code: ${exit_code}
 log: $(basename "$log_file")"
     fi
+    rm -f "$CURRENT_FILE"
   done
 
   sleep "$POLL_INTERVAL"

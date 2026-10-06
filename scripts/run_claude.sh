@@ -15,6 +15,9 @@ CLAUDE_MAX_TURNS="${CLAUDE_MAX_TURNS:-100}"
 
 cd /workspace || exit 1
 
+# An empty token would shadow the stored `login` credentials.
+[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || unset CLAUDE_CODE_OAUTH_TOKEN
+
 # Run from the workspace so Claude operates on the mounted repo.
 # pipefail ensures we capture claude's exit code, not tee's.
 claude \

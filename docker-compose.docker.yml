@@ -1,0 +1,19 @@
+# Optional overlay: give Claude access to the host's Docker daemon.
+#
+# Enable with either:
+#   docker compose -f docker-compose.yml -f docker-compose.docker.yml up -d
+# or by setting in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.docker.yml
+#
+# WARNING: access to the Docker socket is equivalent to root on the host.
+services:
+  worker:
+    environment:
+      # Absolute host path of the repo mounted at /workspace — Claude needs
+      # it for bind mounts in containers it starts (paths resolve on host).
+      HOST_WORKSPACE_PATH: "${HOST_WORKSPACE_PATH:-}"
+    volumes:
+      - "${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock"
+    extra_hosts:
+      # Lets Claude reach ports published by containers it starts.
+      - "host.docker.internal:host-gateway"

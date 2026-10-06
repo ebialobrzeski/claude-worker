@@ -5,3 +5,6 @@ tasks/queue/*.md
 tasks/done/
 tasks/failed/
 workspace/
+claude-home/
+tasks/.current
+tasks/.telegram_offset

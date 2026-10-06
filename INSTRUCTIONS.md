@@ -1,5 +1,8 @@
 # claude-worker — build instructions
 
+> Original build spec. For the current feature set (Remote Control, Telegram
+> commands, host Docker access) see [README.md](README.md).
+
 ## What this repo is
 
 A self-contained Docker environment that runs Claude Code as a persistent
